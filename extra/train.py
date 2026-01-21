@@ -61,7 +61,7 @@ def train_higgs_classifier(signal_path, background_path, model_save_path, epochs
 
 if __name__ == "__main__":
     train_higgs_classifier(
-        signal_path='sel_doublemu_4mu_signal.root', 
-        background_path='sel_doublemu_4mu_noise.root', 
-        model_save_path='4mu_higgs_classifier_model.keras'
+        signal_path='final/sel_doublemu_2mu2e_signal.root', 
+        background_path='final/sel_doublemu_2mu2e_noise.root', 
+        model_save_path='2mu2e_higgs_classifier_model.keras'
     )
