@@ -1,3 +1,4 @@
+import ROOT
 import os
 import argparse
 import subprocess
@@ -39,36 +40,58 @@ def log_failed_file(url):
     with open(os.path.join(LOG_DIR, "failed_files.txt"), "a") as f:
         f.write(f"{url}\n")
 
-
 def download_file(url, local_path):
-    """Download file via xrdcp with retry logic. Returns True if successful."""
-    cmd = ["xrdcp", "--force", "--posc", "--retry", "5", url, local_path]
+    """Download file via xrdcp with parallel streams and extended timeout."""
+    cmd = ["xrdcp", "--force", "--nopbar", "-S", "4", "--retry", "5", url, local_path]
+    
     env = os.environ.copy()
     env["X509_USER_PROXY"] = "/dev/null"
+
+    timeout_seconds = 3600 
     
-    for attempt in range(5):
-        print(f"  Connection Attempt {attempt+1}...")
-        try:
-            result = subprocess.run(cmd, env=env, timeout=600)
-            if result.returncode == 0:
-                print(f"  [SUCCESS] Downloaded.")
-                return True
-        except subprocess.TimeoutExpired:
-            print(f"  [WARNING] Attempt {attempt+1} timed out.")
-        print(f"  [WARNING] Attempt {attempt+1} failed.")
+    print(f"  [START] Downloading via xrdcp (Timeout: {timeout_seconds}s)...")
+    try:
+        result = subprocess.run(cmd, env=env, timeout=timeout_seconds)
+        if result.returncode == 0:
+            print(f"  [SUCCESS] Downloaded.")
+            return True
+        else:
+            print(f"  [ERROR] xrdcp failed with exit code {result.returncode}")
+    except subprocess.TimeoutExpired:
+        print(f"  [TIMEOUT] Download took longer than {timeout_seconds}s.")
+    except Exception as e:
+        print(f"  [ERROR] {e}")
     
     return False
 
 
-def skim_file(stream, local_path, file_index, output_dir):
+def skim_file(stream, local_path, file_index, dataset):
     """Skim file using appropriate logic. Returns True if successful."""
-    try:
-        SKIM_LOGIC[stream](local_path, file_index, output_dir=output_dir)
-        print(f"  [DONE] Skimmed.")
-        return True
-    except Exception as e:
-        print(f"  [SKIM ERROR] {e}")
-        return False
+    mu_dir = os.path.join(BASE_SKIM_DIR, "DoubleMuon", dataset)
+    eg_dir = os.path.join(BASE_SKIM_DIR, "DoubleEG", dataset)
+    success = True
+
+    # Process DoubleMuon if requested
+    if stream in ["DoubleMuon", "both"]:
+        try:
+            os.makedirs(mu_dir, exist_ok=True)
+            print(f"  -> Skimming DoubleMuon to {mu_dir}...")
+            SKIM_LOGIC["DoubleMuon"](local_path, file_index, output_dir=mu_dir)
+        except Exception as e:
+            print(f"  [MU SKIM ERROR] {e}")
+            success = False
+
+    # Process DoubleEG if requested
+    if stream in ["DoubleEG", "both"]:
+        try:
+            os.makedirs(eg_dir, exist_ok=True)
+            print(f"  -> Skimming DoubleEG to {eg_dir}...")
+            SKIM_LOGIC["DoubleEG"](local_path, file_index, output_dir=eg_dir)
+        except Exception as e:
+            print(f"  [EG SKIM ERROR] {e}")
+            success = False
+            
+    return success
 
 
 def cleanup_file(local_path):
@@ -81,13 +104,11 @@ def cleanup_file(local_path):
 def run_pipeline(input_file, stream, dataset):
     """Main pipeline: download and skim ROOT files."""
     
-    # Setup directories
+    # 1. Setup base directories only
     os.makedirs(RAW_DIR, exist_ok=True)
     os.makedirs(LOG_DIR, exist_ok=True)
-    output_dir = os.path.join(BASE_SKIM_DIR, stream, dataset)
-    os.makedirs(output_dir, exist_ok=True)
     
-    print(f"=== STARTING PIPELINE  ===\n")
+    print(f"=== STARTING PIPELINE (Stream: {stream}) ===\n")
     
     # Load URLs and resume progress
     with open(input_file, "r") as f:
@@ -104,23 +125,41 @@ def run_pipeline(input_file, stream, dataset):
         print(f"[File {i+1}/{len(urls)}] Target: {filename}")
         
         # Download
-        downloaded_file = download_file(url, local_path) #Downloads file and returns a boolean
-        if not downloaded_file:
-            print(f"  [ERROR] Skipping {filename}.")
+        if not download_file(url, local_path):
             log_failed_file(url)
             save_progress(stream, dataset, i + 1)
-            os.remove(local_path) if os.path.exists(local_path) else None
             continue
+    
+        skimmed_ok = skim_file(stream, local_path, i+1, dataset) 
         
-        # Skim
-        skimed_file = skim_file(stream, local_path, i+1, output_dir) #Skims file and returns a boolean
-        if not skimed_file:
+        if not skimmed_ok:
             log_failed_file(url)
         
-        # Cleanup
+        # Cleanup and save
         cleanup_file(local_path)
         save_progress(stream, dataset, i + 1)
         print()
+
+# ===== CHAINS SKIMMED FILES =====
+def chain_trees(stream, dataset, tree_name="Events"):
+    """Chain skimmed ROOT files into a single file."""
+
+    skim_dir = os.path.join(BASE_SKIM_DIR, stream, dataset)
+    output_file = os.path.join(BASE_SKIM_DIR, f"{stream}_{dataset}_chained.root")
+    
+    chain = ROOT.TChain(tree_name)
+    
+    for root_file in os.listdir(skim_dir):
+        if root_file.endswith(".root"):
+            chain.Add(os.path.join(skim_dir, root_file))
+    
+    print(f"Chaining {chain.GetEntries()} entries into {output_file}...")
+    out_f = ROOT.TFile(output_file, "RECREATE")
+    out_tree = chain.CloneTree(-1)
+    out_tree.Write()
+    out_f.Close()
+    print("Chaining complete.")
+
 
 
 if __name__ == "__main__":

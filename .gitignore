@@ -1,16 +1,17 @@
-# Minimal .gitignore — ignore script-generated folders and common temp files
-
-# ---------------------------------------------------------------------------
 # Pipeline-generated data (do not commit large, generated ROOT files)
 /data/raw/
 /data/skimmed/
+/analysis/
 /reduced_dataset/
 /results/
 
-# Ignore ROOT files produced by the pipeline (keep committed example ROOTs if needed)
-data/**/*.root
-results/**/*.root
-analysis/*.root
+# Keep only chained ROOT files, ignore individual skimmed files
+/data/skimmed/**/*.root
+!*_chained.root
+
+# Model weight files (keep source scripts in /extra/)
+/extra/*.keras
+/extra/*.h5
 
 # Preprocessing logs and caches (created by scripts)
 /preprocessing/logs/
@@ -21,6 +22,9 @@ __pycache__/
 *.py[cod]
 *.so
 *.egg-info/
+*.pyc
+*.pyo
+*.pyd
 
 # Virtual environments and env files
 .venv/
@@ -35,6 +39,12 @@ Thumbs.db
 .vscode/
 .idea/
 *.swp
+*.swo
+*~
 .pytest_cache/
 .ipynb_checkpoints/
+
+# macOS
+.AppleDouble
+.LSOverride
 
